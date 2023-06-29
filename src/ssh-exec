@@ -1,6 +1,8 @@
 #!/bin/env bash
 : " 
-Parallel Remote Execution utility using ssh
+Parallel Remote Execution utility using ssh [Reimplementation]
+
+:: Setup
 
 :: Synopsis/Syntax
 ssh-exec {options} [exec] ...
@@ -9,111 +11,163 @@ ssh-exec {options} [exec] ...
 - Positionals
     + exec : Begin remote execution
 - Optionals
-    + -a | --append : Append a new command to execute
-    + --domain : Specify hostname/domain/IP address
-    + --parallel-opts : Specify options to parse into Multithreading/parallelism utility 'parallel'
-    + --reset-parallel-opts : Reset all options provided into the parallel options array
-    + --username : Specify username to execute in
+    - With Arguments
+        + --add-remote-host [new-host-IP-address] [new-host-username] : Temporarily define/add a new remote host IP address and username to ssh to
+    - Flags
+        + --generate-config : Enable auto-generating of configuration/command files if doesnt exist
+        + -h | --help : Display help menu and detailed information
 
 :: Usage
-- Sending to multiple remote hosts
-    ssh-exec --username asura --domain 192.168.1.1 -a 'echo Hello World' -a 'echo Hello World 2' exec \     # First system
-             --username asura --domain 192.168.1.2 -a 'echo Hello World' -a 'echo Hello World 2' exec ...   # Second system
+
 "
+
+# Define variables
+
+## Commands
+cmds=() # List of commands to execute
+
+init()
+{
+    ## Remote entities
+    declare -gA remote_entities=(
+        # [key]="value"
+        # key: remote user
+        # value: host IP
+        ["192.168.1.53"]="asura"
+        ["192.168.1.90"]="asura"
+        ["192.168.1.97"]="asura"
+    )
+}
 
 remote_exec()
 {
-    : "
-    Remotely execute commands parsed in via SSH to other devices
-    "
-    username="$1"
-    domain="$2"
-    functions=("${@:2}") # Take in all functions
+    # Loop through all remote entities
+    for entity_hostIP in ${!remote_entities[@]}; do
 
-    # Remotely execute all commands parsed in to the remote host
-    ssh $username@$domain ${functions[@]}
+        # Get username 
+        entity_username=${remote_entities["$entity_hostIP"]}
+        
+        # Prepare remote entity details
+        remote_user="$entity_username"
+        remote_hosts="$entity_hostIP"
+        remote_cfg="$remote_hosts.txt"
+
+        # Check if configuration file exists
+        if [[ ! -f "$remote_cfg" ]]; then
+            # Configuration file for remote entity doesnt exist
+            echo -e "Error: Configuration file [$remote_cfg] for target session [$remote_user@$remote_hosts] doesnt exist."
+            echo -e "\tPlease create and place all your commands into it before proceeding."
+
+            # Exit
+            exit 1
+        fi
+
+        # Read remote host configuration file file
+        readarray -t cmds < $remote_cfg
+
+        # Format command string
+        cmd_exec="" # Command to execute
+        cmd_size="${#cmds[@]}"
+
+        # Check if content has a empty trailing whitespace
+        last_element_ID=$((cmd_size - 1))
+        last_element="${cmds[$last_element_ID]}"
+        if [[ "$last_element" == "" ]]; then
+            # Trailing whitespace
+            # Exit
+            echo -e "Error: Please remove the empty newline at the bottom of the file [$remote_cfg] before starting."
+            exit 1
+        fi
+
+        # No issues
+        for cmd_num in "${!cmds[@]}"; do
+            # Get current command
+            curr_cmd="${cmds[$cmd_num]}"
+
+            # Format and join
+
+            # Check if current queue is the last element
+            if [[ ! $cmd_num -eq $((cmd_size - 1)) ]]; then
+                # If is not the last element
+                cmd_exec+="$curr_cmd && "
+            else
+                # Last element
+                cmd_exec+="$curr_cmd"
+            fi
+        done
+
+        # Execute commands into ssh
+        ssh $remote_user@$remote_hosts << EOF
+$cmd_exec
+EOF
+
+        echo -e ""
+    done
 }
 
 main()
 {
-    # Get Command Line Arguments
     argv=("$@")
     argc="${#argv[@]}"
 
-    # Initialize Variables
-    cmd_arr=()
-    username=""
-    domain=""
-    parallel_opts=("-j4") # Set multithreading/parallel options
-
-    # Process Command Line Arguments
+    ## Check if there are arguments
     if [[ "$argc" -gt 0 ]]; then
-        # Check if there are arguments
+        ## There are arguments
         while [[ "$1" != "" ]]; do
-            # While there are still arguments
-            # Loop through and get arguments
+            ## While there are still arguments
             case "$1" in
-                "-a | --append")
-                    # Append command to the command list
-                    ## Get argument to option
+                "--add-remote-host")
+                    ## Add another remote host and username into the array/list/dictionary
+
+                    ### Check if there are arguments
+                    ## Check for the new remote host's IP address
                     if [[ "$2" != "" ]]; then
-                        # If command is provided
-                        cmd_arr+=("$2")
+                        ### There are
+                        new_hostIP="$2"
+
+                        ## Check for the new remote host's username
+                        if [[ "$3" != "" ]]; then
+                            ### There are
+                            new_username="$3"
+                            shift 1
+
+                            ## Append new remote host into array
+                            remote_entities+=(["$new_hostIP"]="$new_username")
+                        else
+                            echo -e "No remote host username provided."
+                            shift 1
+                        fi
+
                         shift 1
-                    fi
-                    shift 1
-                    ;;
-                "--domain")
-                    # Specify IP address/Hostname/domain name
-                    if [[ "$2" != "" ]]; then
-                        # If ip address/domain is provided
-                        domain="$2"
-                        shift 1
-                    fi
-                    shift 1
-                    ;;
-                "--parallel-opts")
-                    # Specify Multithreading/parallel options
-                    if [[ "$2" != "" ]]; then
-                        # If options are provided
-                        parallel_opts+=("$2")
-                        shift 1
-                    fi
-                    shift 1
-                    ;;
-                "--reset-parallel-opts")
-                    # Reset the options for command 'parallel'
-                    parallel_opts=()
-                    shift 1
-                    ;;
-                "--username")
-                    # Specify username to login to
-                    if [[ "$2" != "" ]]; then
-                        # If username is provided
-                        username="$2"
+                    else
+                        echo -e "No remote host provided."
                         shift 1
                     fi
                     shift 1
                     ;;
                 "exec")
-                    # Execute command
-                    parallel $parallel_opts remote_exec "${cmd_arr[@]}" # Perform multithreading/Parallel execution
-
-                    # Reset variables after execution
-                    cmd_arr=()
-
-                    # Shift argument list back one time
+                    ## Begin the remote execution
+                    remote_exec
+                    shift 1
+                    ;;
+                "-h" | "--help")
+                    ## Display help message
+                    echo -e "[Display Help]"
                     shift 1
                     ;;
                 *)
-                    # Invalid argument
+                    # Invalid Argument
+                    echo -e "Invalid argument provided: $1"
                     shift 1
                     ;;
             esac
         done
+    else
+        echo -e "No arguments provided."
     fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    init
     main "$@"
-fi
+fi 

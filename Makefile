@@ -57,6 +57,7 @@ uninstall:
 
 test:
 	## Test run program with sample data
-	@src/${SRC} ${TEST_OPTIONS}
+	### @src/${SRC} ${TEST_OPTIONS}
+	./test/test_all.sh
 
 
